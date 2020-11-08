@@ -47,21 +47,30 @@ module axi_ltc2387_if #(
   parameter   TCLKDCO = 2.3) (
 
   // adc interface
-  
+
+  input                   clock,
+  input                   clk_in_p,
+  input                   clk_in_n,
   input                   dco_p,
   input                   dco_n,
   input                   adc_da_in_p,
   input                   adc_da_in_n,
   input                   adc_db_in_p,
   input                   adc_db_in_n,
-  output                  cnv_p,
-  output                  cnv_n,
-  
+  output                  cnv,
+  output                  clk_en,
+
   // interface outputs
 
-  output                  adc_clk,
   output  reg [31:0]      adc_data,
   output  reg             adc_status,
+
+  // control signals
+
+  input       [31:0]      samp_period,
+  input       [31:0]      cnv_h_period,
+  input       [31:0]      dco_phase_offset,
+  input       [31:0]      dco_h_period,
 
   // delay control signals
 
@@ -72,23 +81,25 @@ module axi_ltc2387_if #(
   input                   delay_clk,
   input                   delay_rst,
   output                  delay_locked);
-  
+
   // local wires and registers
-  
-  reg                     clk_p = 1'b0;
-  reg                     cnv = 1'b0;
+
+  reg                     cnv_reg = 1'b0;
   reg                     dco = 1'b0;
   reg                     last_dco;
-  reg         [3:0]       num_dco = (RESOLUTION == 18)?(TWOLANES == 0)?'h9:'h5:(TWOLANES == 0)?'h8:'h4; 
-  reg                     dco_en;
-  reg         [4:0]       adc_clk_cnt = 5'd0;
+  reg                     last_dco_d;
+  reg         [5:0]       num_dco = (RESOLUTION == 18) ?
+                                      (TWOLANES) ? 'h5:'h9 :
+                                      (TWOLANES) ? 'h4:'h8;
+  reg         [5:0]       dco_en_cnt;
+  reg         [5:0]       dco_in_cnt;
+  reg                     clk_en_ctrl;
+  reg       [31 :0]       period_cnt = 32'd0;
   reg                     two_lanes = TWOLANES;
   reg                     sync_pulse;
   reg  [RESOLUTION-1:0]   dac_data_s = 'b0;
-  reg  [RESOLUTION-1:0]   adc_s_data = 'b0;   
-  reg  [RESOLUTION-1:0]   data_r ='b0; 
   reg  [RESOLUTION+1:0]   adc_data_d ='b0;
- 
+
   // internal registers
 
   reg         [8:0]       adc_data_p = 'd0;
@@ -96,79 +107,54 @@ module axi_ltc2387_if #(
 
   // internal signals
 
-  wire        [8:0]       adc_data_p_s;
-  wire        [8:0]       adc_data_n_s;
-  wire        [1:0]       rx_data_a_s;                                                      
+  wire        [1:0]       rx_data_a_s;
   wire        [1:0]       rx_data_b_s;
 
-  always @ (posedge adc_clk)    begin
+  wire                    dco_s;
 
-    
+  assign cnv = cnv_reg;
+  assign clk_en = clk_en_ctrl;
+////////////////////////////////////////////////////////
+// ADD RESET LOGIC
+////////////////////////////////////////////////////////
+  always @(posedge clock) begin
+    if (period_cnt == samp_period) begin
+      period_cnt <= 32'd0;
+    end else begin
+      period_cnt <= period_cnt + 1;
+    end
+
+    if (period_cnt == 0) begin
+      cnv_reg <= 1'b1;
+    end else if (period_cnt == cnv_h_period) begin
+      cnv_reg <= 1'b0;
+    end else begin
+      cnv_reg <= cnv_reg;
+    end
+
+    if (period_cnt == dco_phase_offset) begin
+      dco_en_cnt <= dco_h_period;
+      clk_en_ctrl <= 1'b1;
+    end else begin
+      if (dco_en_cnt != 0) begin
+        dco_en_cnt <= dco_en_cnt - 1'b1;
+      end else begin
+        clk_en_ctrl <= 1'b0;
+      end
+    end
   end
 
-  always @(posedge adc_clk) begin                                                   
-    if (adc_clk_cnt < RESOLUTION-1 )                                                    
-      begin                                                                        
-        adc_clk_cnt <= adc_clk_cnt + 1;     
-        cnv <= 1'b0;                                             
-      end else begin                                                                   
-        adc_clk_cnt <= 4'd0 ;      
-        cnv <= 1'b1;                                             
-      end                                                                          
-  end 
-
-  always @(posedge adc_clk) begin 
-    if (adc_clk_cnt < num_dco) begin
-      dco_en <= 1'b1;
-    end else begin
-      dco_en <= 1'b0;                                                    
-    end                          
-  end  
- 
-  always @(posedge adc_clk) begin
-    if (adc_clk_cnt == num_dco + 1) begin
+  always @(posedge dco_s) begin
+    if (dco_in_cnt == dco_h_period) begin
       last_dco <= 1'b1;
+      dco_in_cnt <= 0;
     end else begin
+      dco_in_cnt <= dco_in_cnt + 1'b1;
       last_dco <= 1'b0;
     end
   end
 
-  always @(posedge adc_clk or negedge adc_clk) begin     
-    if (dco_en == 1) begin
-      clk_p = ~clk_p;  
-      #TCLKDCO dco = clk_p;                          
-    end else begin
-      clk_p = 1'b0;
-      #TCLKDCO dco = clk_p;  
-    end
-  end
-
-  always @(posedge adc_clk) begin
-    if (last_dco == 1) begin
-      adc_data_d <= 18'b0;
-      adc_s_data <= 18'b0;
-      data_r <= 18'b0;
-    end
-  end
-
- // always @(posedge cnv) begin                                                 
- //   dac_s_data <= input_signal;  
- // end
-
-  always @(posedge dco) begin   
-    if (two_lanes == 0) begin                                               
-      dac_s_data <= dac_s_data << 2;  
-    end else begin                                                          
-      dac_s_data <= dac_s_data << 4;                                        
-    end                             
-  end
-
-  assign  rx_data_a_s[1] = two_lanes ? dac_s_data[RESOLUTION-1] : dac_s_data[RESOLUTION-1];
-  assign  rx_data_b_s[1] = two_lanes ? dac_s_data[RESOLUTION-2] : 1'b0;
-  assign  rx_data_a_s[0] = two_lanes ? dac_s_data[RESOLUTION-3] : dac_s_data[RESOLUTION-2];
-  assign  rx_data_b_s[0] = two_lanes ? dac_s_data[RESOLUTION-4] : 1'b0;
-
-  always @(posedge dco) begin
+  always @(posedge dco_s) begin
     if (two_lanes == 0) begin
       adc_data_d <= (adc_data_d << 2) | {{(RESOLUTION-2){1'b0}}, rx_data_a_s[1], rx_data_a_s[0]};
     end else begin
@@ -176,32 +162,36 @@ module axi_ltc2387_if #(
     end
   end
 
-  always @(posedge last_dco) begin
-    if (two_lanes == 0) begin
-      adc_data <= adc_data_d[RESOLUTION-1:0];
-    end else begin
-      if (RESOLUTION == 16) begin
-        adc_data = adc_data_d[RESOLUTION-1:0];
+  always @(posedge clock) begin
+    last_dco_d <= last_dco;
+    if (!last_dco_d & last_dco) begin
+      if (two_lanes == 0) begin
+        adc_data <= adc_data_d[RESOLUTION-1:0];
       end else begin
-        adc_data = adc_data_d[RESOLUTION+1:2];
+        if (RESOLUTION == 16) begin
+          adc_data = adc_data_d[RESOLUTION-1:0];
+        end else begin
+          adc_data = adc_data_d[RESOLUTION+1:2];
+        end
       end
+    end else begin
+      adc_data <= adc_data;
     end
   end
 
   // data interface
 
-  generate
   ad_data_in #(
     .FPGA_TECHNOLOGY (FPGA_TECHNOLOGY),
     .IODELAY_CTRL (0),
     .IODELAY_GROUP (IO_DELAY_GROUP),
     .REFCLK_FREQUENCY (DELAY_REFCLK_FREQUENCY))
   i_adc_data_a (
-    .rx_clk (adc_clk),
+    .rx_clk (dco_s),
     .rx_data_in_p (adc_da_in_p),
     .rx_data_in_n (adc_da_in_n),
-    .rx_data_p (adc_data_p_s),
-    .rx_data_n (adc_data_n_s),
+    .rx_data_p (rx_data_a_s[1]),
+    .rx_data_n (rx_data_a_s[0]),
     .up_clk (up_clk),
     .up_dld (up_dld),
     .up_dwdata (up_dwdata),
@@ -209,20 +199,18 @@ module axi_ltc2387_if #(
     .delay_clk (delay_clk),
     .delay_rst (delay_rst),
     .delay_locked ());
-   endgenerate
 
-  generate
   ad_data_in #(
     .FPGA_TECHNOLOGY (FPGA_TECHNOLOGY),
     .IODELAY_CTRL (0),
     .IODELAY_GROUP (IO_DELAY_GROUP),
     .REFCLK_FREQUENCY (DELAY_REFCLK_FREQUENCY))
   i_adc_data_b (
-    .rx_clk (adc_clk),
+    .rx_clk (dco_s),
     .rx_data_in_p (adc_db_in_p),
     .rx_data_in_n (adc_db_in_n),
-    .rx_data_p (adc_data_p_s),
-    .rx_data_n (adc_data_n_s),
+    .rx_data_p (rx_data_b_s[1]),
+    .rx_data_n (rx_data_b_s[0]),
     .up_clk (up_clk),
     .up_dld (up_dld),
     .up_dwdata (up_dwdata),
@@ -230,18 +218,17 @@ module axi_ltc2387_if #(
     .delay_clk (delay_clk),
     .delay_rst (delay_rst),
     .delay_locked ());
-   endgenerate
 
-
-  // clock
+  // dco (clock)
 
   ad_data_clk
-  i_adc_clk (
+  i_dco (
     .rst (1'b0),
     .locked (),
-    .clk_in_p (adc_clk_in_p),
-    .clk_in_n (adc_clk_in_n),
-    .clk (adc_clk));
+    .clk_in_p (dco_p),
+    .clk_in_n (dco_n),
+    .clk (dco_s));
+
 
 endmodule
 

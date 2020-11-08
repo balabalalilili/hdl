@@ -47,15 +47,16 @@ module axi_ltc2387 #(
 
   // adc interface
 
+  input                   clock,
   input                   dco_p,
   input                   dco_n,
   input                   adc_da_in_p,
   input                   adc_da_in_n,
   input                   adc_db_in_p,
   input                   adc_db_in_n,
-  output                  cnv_p,
-  output                  cnv_n,
-  
+  output                  cnv,
+  output                  clk_en,
+
   // delay interface
 
   input                   delay_clk,
@@ -63,11 +64,11 @@ module axi_ltc2387 #(
   // dma interface
 
   output                  adc_clk,
-  output                  adc_rst,
-  output                  adc_valid,
-  output                  adc_enable,
+//  output                  adc_rst,
+//  output                  adc_valid,
+//  output                  adc_enable,
   output      [31:0]      adc_data,
-  input                   adc_dovf,
+//  input                   adc_dovf,
 
   // axi interface
 
@@ -115,9 +116,9 @@ module axi_ltc2387 #(
   wire    [44:0]  up_drdata_s;
   wire            delay_locked_s;
   wire    [13:0]  up_raddr_s;
-  wire    [31:0]  up_rdata_s[0:2];
-  wire            up_rack_s[0:2];
-  wire            up_wack_s[0:2];
+  wire    [31:0]  up_rdata_s[0:1];
+  wire            up_rack_s[0:1];
+  wire            up_wack_s[0:1];
   wire            up_wreq_s;
   wire    [13:0]  up_waddr_s;
   wire    [31:0]  up_wdata_s;
@@ -136,56 +137,34 @@ module axi_ltc2387 #(
       up_rack <= 'd0;
       up_wack <= 'd0;
     end else begin
-      up_rdata <= up_rdata_s[0] | up_rdata_s[1] | up_rdata_s[2];
-      up_rack <= up_rack_s[0] | up_rack_s[1] | up_rack_s[2];
-      up_wack <= up_wack_s[0] | up_wack_s[1] | up_wack_s[2];
+      up_rdata <= up_rdata_s[0] | up_rdata_s[1];
+      up_rack <= up_rack_s[0] | up_rack_s[1];
+      up_wack <= up_wack_s[0] | up_wack_s[1];
     end
   end
 
-  // channel
-
-  axi_ltc2387_channel #(
-    .CHANNEL_ID(0),
-    .DATAPATH_DISABLE (ADC_DATAPATH_DISABLE))
-  i_channel (
-    .adc_clk (adc_clk),
-    .adc_rst (adc_rst),
-    .adc_data (adc_data_s),
-    .adc_or (),
-    .adc_dcfilter_data_out (),
-    .adc_enable (adc_enable),
-    .adc_valid (adc_valid),
-    .up_adc_pn_err (),
-    .up_adc_pn_oos (),
-    .up_adc_or (),
-    .up_rstn (up_rstn),
-    .up_clk (up_clk),
-    .up_wreq (up_wreq_s),
-    .up_waddr (up_waddr_s),
-    .up_wdata (up_wdata_s),
-    .up_wack (up_wack_s[0]),
-    .up_rreq (up_rreq_s),
-    .up_raddr (up_raddr_s),
-    .up_rdata (up_rdata_s[0]),
-    .up_rack (up_rack_s[0]));
-
-  // main (device interface)
+  // device interface
 
   axi_ltc2387_if #(
     .FPGA_TECHNOLOGY (FPGA_TECHNOLOGY),
     .IO_DELAY_GROUP (IO_DELAY_GROUP))
   i_if (
+    .clock (clock),
     .adc_da_in_p (adc_da_in_p),
     .adc_da_in_n (adc_da_in_n),
     .adc_db_in_p (adc_db_in_p),
     .adc_db_in_n (adc_db_in_n),
     .dco_p (dco_p),
     .dco_n (dco_n),
-    .cnv_p (cnv_p),
-    .cnv_n (cnv_n),
-    .adc_clk (adc_clk),
+    .cnv (cnv),
+    .clk_en (clk_en),
+    //.adc_clk (adc_clk),
     .adc_data (adc_data_s),
     .adc_status (adc_status_s),
+    .samp_period (reg_control_0),
+    .cnv_h_period (reg_control_1),
+    .dco_phase_offset (reg_control_2),
+    .dco_h_period (reg_control_3),
     .up_clk (up_clk),
     .up_dld (up_dld_s),
     .up_dwdata (up_dwdata_s),
@@ -208,68 +187,55 @@ module axi_ltc2387 #(
     .up_wreq (up_wreq_s),
     .up_waddr (up_waddr_s),
     .up_wdata (up_wdata_s),
-    .up_wack (up_wack_s[2]),
-    .up_rreq (up_rreq_s),
-    .up_raddr (up_raddr_s),
-    .up_rdata (up_rdata_s[2]),
-    .up_rack (up_rack_s[2]));
-
-  // common processor control
-
-  up_adc_common #(
-    .ID (ID),
-    .FPGA_TECHNOLOGY (FPGA_TECHNOLOGY),
-    .FPGA_FAMILY (FPGA_FAMILY),
-    .SPEED_GRADE (SPEED_GRADE),
-    .DEV_PACKAGE (DEV_PACKAGE),
-    .CONFIG (0),
-    .COMMON_ID (6'h00),
-    .DRP_DISABLE (6'h00),
-    .USERPORTS_DISABLE (0),
-    .GPIO_DISABLE (0),
-    .START_CODE_DISABLE(0))
-  i_up_adc_common (
-    .mmcm_rst (),
-    .adc_clk (adc_clk),
-    .adc_rst (adc_rst),
-    .adc_r1_mode (),
-    .adc_ddr_edgesel (),
-    .adc_pin_mode (),
-    .adc_status (adc_status_s),
-    .adc_sync_status (1'd0),
-    .adc_status_ovf (adc_dovf),
-    .adc_clk_ratio (32'd1),
-    .adc_start_code (),
-    .adc_sref_sync (),
-    .adc_sync (),
-    .up_pps_rcounter(32'd0),
-    .up_pps_status(1'd0),
-    .up_pps_irq_mask(),
-    .up_adc_ce (),
-    .up_status_pn_err (),
-    .up_status_pn_oos (),
-    .up_status_or (),
-    .up_drp_sel (),
-    .up_drp_wr (),
-    .up_drp_addr (),
-    .up_drp_wdata (),
-    .up_drp_rdata (32'd0),
-    .up_drp_ready (1'd0),
-    .up_drp_locked (1'd1),
-    .up_usr_chanmax_out (),
-    .up_usr_chanmax_in (8'd0),
-    .up_adc_gpio_in (32'd0),
-    .up_adc_gpio_out (),
-    .up_rstn (up_rstn),
-    .up_clk (up_clk),
-    .up_wreq (up_wreq_s),
-    .up_waddr (up_waddr_s),
-    .up_wdata (up_wdata_s),
     .up_wack (up_wack_s[1]),
     .up_rreq (up_rreq_s),
     .up_raddr (up_raddr_s),
     .up_rdata (up_rdata_s[1]),
     .up_rack (up_rack_s[1]));
+
+  axi_custom_control #(
+    .STAND_ALONE (0),
+    .ADDR_OFFSET (0),
+    .N_CONTROL_REG (4),
+    .N_STATUS_REG (4)
+  ) i_custom_control (
+    .clk (clock),
+    .reg_status_0 (adc_status_s),
+    .reg_status_1 (32'd0),
+    .reg_status_2 (32'd0),
+    .reg_status_3 (32'd0),
+    .reg_control_0 (reg_control_0),
+    .reg_control_1 (reg_control_1),
+    .reg_control_2 (reg_control_2),
+    .reg_control_3 (reg_control_3),
+    //.s_axi_aclik (1'd0),
+    //.s_axi_aresetn (1'd0),
+    //.s_axi_awvalid (1'd0),
+    //.s_axi_awaddr (7'd0),
+    //.s_axi_awprot (3'd0),
+    //.s_axi_wvalid (1'd0),
+    //.s_axi_wdata (32'd0),
+    //.s_axi_wstrb (4'd0),
+    //.s_axi_bready (1'd0),
+    //.s_axi_arvalid (1'd0),
+    //.s_axi_araddr (7'd0),
+    //.s_axi_arprot (3'd0),
+    //.s_axi_rready (1'd0),
+    //.up_wreq_ext (1'd0),
+    //.up_waddr_ext (16'd0),
+    //.up_wdata_ext (32'd0),
+    //.up_rreq_ext (1'd0),
+    //.up_raddr_ext (16'd0),
+    .up_rstn_ext (up_rstn),
+    .up_clk_ext (up_clk),
+    .up_wreq_ext (up_wreq_s),
+    .up_waddr_ext (up_waddr_s),
+    .up_wdata_ext (up_wdata_s),
+    .up_wack_ext (up_wack_s[0]),
+    .up_rreq_ext (up_rreq_s),
+    .up_raddr_ext (up_raddr_s),
+    .up_rdata_ext (up_rdata_s[0]),
+    .up_rack_ext (up_rack_s[0]));
 
   // up bus interface
 
